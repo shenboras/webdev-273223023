@@ -19,3 +19,9 @@ Delegated: database schema with SQLite seed, bcrypt local session auth, protecte
 Checkpoints: verified login redirect on unauthenticated /events, verified database seeded rows, inspected table with sqlite3
 Went wrong: the list initially rendered unordered; added sorting and verified session cookies
 Changed by hand: added HTTP-only session cookie protection, verified redirects
+
+
+## 2026-11-03 · Exercise 3 event registration feature
+Goal: Add event joining functionality with capacity and conflict checks.
+Autonomy: Agent wrote database schema and route handlers; reviewed diff before commit.
+Checkpoints: npm test green before commit.

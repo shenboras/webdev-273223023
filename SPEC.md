@@ -54,6 +54,11 @@ Three screens: Sign-in view, upcoming events list with seat badges, and event de
 - [AC-10] After submitting valid seeded credentials at `/login`, the user lands on `/events` displaying the three seeded events with titles, dates, and available seat counts.
 - [AC-11] Deleting one event record from the database and reloading `/events` immediately removes that event from the displayed list.
 
+### Slice 2: join club event
+- [AC-1] A member can join an existing event if capacity allows.
+- [AC-2] A second registration for the same event by the same user is refused with 409 Conflict.
+- [AC-3] Joining a fully booked event is refused with 400 Bad Request.
+
 ## Traceability
 | Criterion | Test |
 | --- | --- |

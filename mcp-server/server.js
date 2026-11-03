@@ -1,138 +1,140 @@
-const readline = require('node:readline');
-const fs = require('node:fs');
-const path = require('node:path');
+const express = require('express');
+const session = require('express-session');
+const bcrypt = require('bcryptjs');
+const db = require('./data/db');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'club-events-local-dev-secret',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { httpOnly: true, maxAge: 24 * 60 * 60 * 1000 }
+}));
 
 
-const lectures = JSON.parse(
-  fs.readFileSync(path.join(__dirname, 'lectures.json'), 'utf8')
-);
-
-
-function textResult(id, text, isError) {
-  return {
-    jsonrpc: '2.0',
-    id: id,
-    result: {
-      content: [{ type: 'text', text: text }],
-      isError: isError,
-    },
-  };
+function requireAuth(req, res, next) {
+  if (!req.session || !req.session.userId) {
+    return res.redirect(302, '/login');
+  }
+  next();
 }
 
 
-const tools = [
-  {
-    name: 'find_lecture',
-    description: 'Return the title and topics of one course lecture by its number, 1 to 12. Use it when asked what a lecture covers.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        number: { type: 'integer', description: 'Lecture number, 1 to 12' },
-      },
-      required: ['number'],
-    },
-  },
-  {
-    name: 'list_lectures',
-    description: 'List the number and title of every course lecture. Use it when asked what the course covers.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-    },
-  },
-];
+app.get('/login', (req, res) => {
+  if (req.session && req.session.userId) {
+    return res.redirect('/events');
+  }
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head><title>Sign In</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+    <body style="font-family: sans-serif; max-width: 400px; margin: 40px auto; padding: 0 10px;">
+      <h2>Club Events Login</h2>
+      <p style="color: #666;">Seeded account: <code>member@example.com</code> / <code>password123</code></p>
+      <form method="POST" action="/login">
+        <div style="margin-bottom: 12px;">
+          <label>Email</label><br>
+          <input type="email" name="email" required style="width: 100%; padding: 8px; box-sizing: border-box;" value="member@example.com">
+        </div>
+        <div style="margin-bottom: 12px;">
+          <label>Password</label><br>
+          <input type="password" name="password" required style="width: 100%; padding: 8px; box-sizing: border-box;" value="password123">
+        </div>
+        <button type="submit" style="padding: 10px 16px; background: #0070f3; color: white; border: none; border-radius: 4px; cursor: pointer;">Sign In</button>
+      </form>
+    </body>
+    </html>
+  `);
+});
+
+app.post('/login', (req, res) => {
+  const { email, password } = req.body;
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  if (!user || !bcrypt.compareSync(password, user.password_hash)) {
+    return res.status(401).send('Invalid credentials. <a href="/login">Try again</a>');
+  }
+  req.session.userId = user.id;
+  req.session.email = user.email;
+  res.redirect('/events');
+});
+
+app.get('/logout', (req, res) => {
+  req.session.destroy(() => {
+    res.redirect('/login');
+  });
+});
 
 
-function send(reply) {
-  process.stdout.write(JSON.stringify(reply) + '\n');
-}
+app.get('/events', requireAuth, (req, res) => {
+  const events = db.prepare('SELECT * FROM events').all();
+  const eventRows = events.map(e => `
+    <li style="border: 1px solid #ddd; margin-bottom: 12px; padding: 12px; border-radius: 6px; list-style: none;">
+      <h3 style="margin: 0 0 8px 0;">${e.title}</h3>
+      <p style="margin: 4px 0;"><strong>Date:</strong> ${e.date}</p>
+      <p style="margin: 4px 0;"><strong>Capacity:</strong> ${e.capacity}</p>
+      <p style="margin: 4px 0; color: #555;">${e.description || ''}</p>
+      <form method="POST" action="/events/${e.id}/join" style="margin-top: 8px;">
+        <button type="submit" style="padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Join Event</button>
+      </form>
+    </li>
+  `).join('');
+
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head><title>Upcoming Events</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+    <body style="font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 0 10px;">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h2>Upcoming Club Events</h2>
+        <a href="/logout" style="color: #d00;">Logout</a>
+      </div>
+      <p>Signed in as: <strong>${req.session.email}</strong></p>
+      <ul style="padding: 0;">
+        ${eventRows}
+      </ul>
+    </body>
+    </html>
+  `);
+});
 
 
-function handle(msg) {
-  // 1. Handshake
-  if (msg.method === 'initialize') {
-    return {
-      jsonrpc: '2.0',
-      id: msg.id,
-      result: {
-        protocolVersion: msg.params.protocolVersion,
-        capabilities: { tools: {} },
-        serverInfo: { name: 'lectures', version: '0.1.0' },
-      },
-    };
+app.post('/events/:id/join', requireAuth, (req, res) => {
+  const eventId = req.params.id;
+  const userId = req.session.userId;
+
+  const event = db.prepare('SELECT * FROM events WHERE id = ?').get(eventId);
+  if (!event) {
+    return res.status(404).send('Event not found.');
   }
 
-
-  if (msg.method === 'notifications/initialized') {
-    return null;
+  const existing = db.prepare('SELECT * FROM registrations WHERE user_id = ? AND event_id = ?').get(userId, eventId);
+  if (existing) {
+    return res.status(409).send(`Conflict: You are already registered for "${event.title}".`);
   }
 
-
-  if (msg.method === 'tools/list') {
-    return {
-      jsonrpc: '2.0',
-      id: msg.id,
-      result: { tools: tools },
-    };
+  const regCount = db.prepare('SELECT COUNT(*) as count FROM registrations WHERE event_id = ?').get(eventId).count;
+  if (regCount >= event.capacity) {
+    return res.status(400).send('Bad Request: Event is fully booked.');
   }
 
-
-  if (msg.method === 'tools/call') {
-    const name = msg.params.name;
-    const args = msg.params.arguments || {};
-
-    if (name === 'find_lecture') {
-      const lecture = lectures.find((l) => l.number === args.number);
-      if (!lecture) {
-
-        return textResult(
-          msg.id,
-          'There is no lecture ' + args.number + '. The course has lectures 1 to 12.',
-          true
-        );
-      }
-      return textResult(
-        msg.id,
-        'Lecture ' + lecture.number + ': ' + lecture.title + '. Topics: ' + lecture.topics,
-        false
-      );
-    }
-
-    if (name === 'list_lectures') {
-      const listText = lectures.map((l) => l.number + '. ' + l.title).join('\n');
-      return textResult(msg.id, listText, false);
-    }
-
-
-    return {
-      jsonrpc: '2.0',
-      id: msg.id,
-      error: { code: -32602, message: 'Unknown tool: ' + name },
-    };
-  }
-
-
-  if (msg.id !== undefined) {
-    return {
-      jsonrpc: '2.0',
-      id: msg.id,
-      error: { code: -32601, message: 'Unknown method: ' + msg.method },
-    };
-  }
-
-  return null;
-}
-
-
-const lines = readline.createInterface({ input: process.stdin });
-
-lines.on('line', (line) => {
-
-  console.error('got: ' + line);
   try {
-    const reply = handle(JSON.parse(line));
-    if (reply) send(reply);
+    db.prepare('INSERT INTO registrations (user_id, event_id) VALUES (?, ?)').run(userId, eventId);
+    res.redirect('/events');
   } catch (err) {
-    console.error('JSON parse error: ' + err.message);
+    res.status(500).send('Server error.');
   }
+});
+
+
+app.get('/', (req, res) => {
+  res.redirect('/events');
+});
+
+app.listen(PORT, () => {
+  console.log(`Club events listening on http://localhost:${PORT}`);
 });
