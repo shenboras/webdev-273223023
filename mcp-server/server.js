@@ -2,6 +2,19 @@ const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
 const db = require('./data/db');
+const required = ['DATABASE_URL', 'SESSION_SECRET'];
+const missing = required.filter((name) => !process.env[name] || !process.env[name].trim());
+if (missing.length > 0) {
+  console.error(`missing ${missing.join(', ')}: see .env.example`);
+  process.exit(1);
+}
+
+module.exports = {
+  port: Number(process.env.PORT) || 3000,
+  databaseUrl: process.env.DATABASE_URL,
+  sessionSecret: process.env.SESSION_SECRET,
+  publicBaseUrl: process.env.PUBLIC_BASE_URL || `http://localhost:${Number(process.env.PORT) || 3000}`,
+};
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -137,4 +150,29 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Club events listening on http://localhost:${PORT}`);
+});
+
+app.get('/health', async (req, res) => {
+  try {
+    await db.checkDb();
+    res.status(200).json({ status: 'ok', db: 'ok' });
+  } catch (err) {
+    console.error('health check failed:', err.message);
+    res.status(503).json({ status: 'error', db: 'down' });
+  }
+});
+
+
+app.use((req, res) => {
+  res.status(404).json({ error: 'Not found' });
+});
+
+
+app.use((err, req, res, next) => {
+  console.error(err);
+  const status = err.status || (err.type === 'entity.parse.failed' ? 400 : 500);
+  const message = status < 500
+    ? 'That request is not valid.'
+    : 'Something went wrong on our side.';
+  res.status(status).json({ error: message });
 });
